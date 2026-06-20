@@ -87,3 +87,11 @@ export interface VerifyResult {
   frequencies?: Record<string, number>;
   ratio?: [number, number] | null;
 }
+
+export interface SaveData {
+  currentLevel: number;
+  completedEdges: string[];
+  validConnections: Connection[];
+  isComplete: boolean;
+  savedAt: number;
+}

@@ -6,7 +6,8 @@ import type {
   ScreenPoint,
   CurvePoint,
   BackgroundStar,
-  LevelData
+  LevelData,
+  SaveData
 } from './types';
 import { Renderer } from './renderer';
 import { getLevel, verifyEdge } from './api';
@@ -20,6 +21,7 @@ import {
 
 const SNAP_DISTANCE = 35;
 const SAMPLE_INTERVAL = 16;
+const STORAGE_KEY = 'star_myth_save';
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -227,6 +229,7 @@ export class Game {
 
         if (result.valid) {
           this.state.completedEdges.add(edgeKey);
+          this.saveGame();
           this.checkCompletion();
         } else {
           setTimeout(() => {
@@ -294,6 +297,7 @@ export class Game {
 
     if (current >= total && !this.state.isComplete) {
       this.state.isComplete = true;
+      this.saveGame();
       if (this.completionTimeoutId) {
         clearTimeout(this.completionTimeoutId);
       }
@@ -329,6 +333,7 @@ export class Game {
         requestAnimationFrame(fadeOut);
       } else {
         this.state.connections.splice(idx, 1);
+        this.saveGame();
       }
     };
     fadeOut();
@@ -346,6 +351,7 @@ export class Game {
     this.state.drawState = this.createEmptyDrawState();
     this.state.snapTargetId = null;
     this.onProgressChange?.(0, this.state.levelData?.edges.length ?? 0);
+    this.saveGame();
   }
 
   toggleFrequencies(): boolean {
@@ -481,6 +487,71 @@ export class Game {
     const total = this.state.levelData.edges.length;
     if (total === 0) return 0;
     return this.state.completedEdges.size / total;
+  }
+
+  saveGame(): void {
+    if (!this.state.levelData) return;
+
+    const validConnections = this.state.connections.filter(c => c.valid);
+
+    const saveData: SaveData = {
+      currentLevel: this.state.currentLevel,
+      completedEdges: Array.from(this.state.completedEdges),
+      validConnections: validConnections,
+      isComplete: this.state.isComplete,
+      savedAt: Date.now()
+    };
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saveData));
+    } catch (err) {
+      console.warn('保存存档失败:', err);
+    }
+  }
+
+  static loadSave(): SaveData | null {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) return null;
+      return JSON.parse(data) as SaveData;
+    } catch (err) {
+      console.warn('读取存档失败:', err);
+      return null;
+    }
+  }
+
+  async restoreFromSave(saveData: SaveData): Promise<boolean> {
+    const loaded = await this.loadLevel(saveData.currentLevel);
+    if (!loaded) return false;
+
+    this.state.completedEdges = new Set(saveData.completedEdges);
+    this.state.connections = saveData.validConnections.map(c => ({
+      ...c,
+      opacity: 1,
+      glowIntensity: 1
+    }));
+    this.state.isComplete = saveData.isComplete;
+
+    if (this.state.levelData) {
+      this.onProgressChange?.(
+        this.state.completedEdges.size,
+        this.state.levelData.edges.length
+      );
+
+      if (saveData.isComplete) {
+        this.onComplete?.(this.state.levelData.creatureDescription);
+      }
+    }
+
+    return true;
+  }
+
+  static clearSave(): void {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (err) {
+      console.warn('清除存档失败:', err);
+    }
   }
 
   destroy(): void {

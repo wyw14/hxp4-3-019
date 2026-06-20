@@ -1,6 +1,6 @@
 import { Game } from './game';
-import type { LevelData } from './types';
-import { healthCheck } from './api';
+import type { LevelData, SaveData } from './types';
+import { healthCheck, getLevel } from './api';
 
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const game = new Game(canvas);
@@ -16,10 +16,18 @@ const completeModal = document.getElementById('complete-modal')!;
 const modalTitleEl = document.getElementById('modal-title')!;
 const modalDescEl = document.getElementById('modal-desc')!;
 
+const saveModal = document.getElementById('save-modal')!;
+const saveLevelEl = document.getElementById('save-level')!;
+const saveProgressEl = document.getElementById('save-progress')!;
+const saveCompleteEl = document.getElementById('save-complete')!;
+const saveTimeEl = document.getElementById('save-time')!;
+
 const btnUndo = document.getElementById('btn-undo') as HTMLButtonElement;
 const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
 const btnHint = document.getElementById('btn-hint') as HTMLButtonElement;
 const btnNext = document.getElementById('btn-next') as HTMLButtonElement;
+const btnContinue = document.getElementById('btn-continue') as HTMLButtonElement;
+const btnRestart = document.getElementById('btn-restart') as HTMLButtonElement;
 
 const MAX_LEVELS = 3;
 
@@ -94,8 +102,73 @@ btnNext.addEventListener('click', async () => {
 
   completeModal.classList.remove('show');
   btnHint.textContent = '显示频率';
+  Game.clearSave();
   await game.loadLevel(nextLevel);
 });
+
+function formatSaveTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return '刚刚';
+  if (diffMins < 60) return `${diffMins} 分钟前`;
+  if (diffHours < 24) return `${diffHours} 小时前`;
+  if (diffDays < 7) return `${diffDays} 天前`;
+
+  return date.toLocaleDateString('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+async function showSaveDialog(saveData: SaveData): Promise<boolean> {
+  const levelData = await getLevel(saveData.currentLevel);
+  const totalEdges = levelData?.edges.length ?? 0;
+  const completedEdges = saveData.completedEdges.length;
+
+  saveLevelEl.textContent = `第 ${saveData.currentLevel} 关`;
+  saveProgressEl.textContent = `${completedEdges} / ${totalEdges}`;
+  saveCompleteEl.textContent = saveData.isComplete ? '已通关' : '未通关';
+  saveTimeEl.textContent = formatSaveTime(saveData.savedAt);
+
+  saveModal.classList.add('show');
+
+  return new Promise((resolve) => {
+    const handleContinue = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const handleRestart = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    const cleanup = () => {
+      btnContinue.removeEventListener('click', handleContinue);
+      btnRestart.removeEventListener('click', handleRestart);
+      saveModal.classList.remove('show');
+    };
+
+    btnContinue.addEventListener('click', handleContinue);
+    btnRestart.addEventListener('click', handleRestart);
+  });
+}
+
+async function startNewGame(): Promise<boolean> {
+  Game.clearSave();
+  return await game.loadLevel(1);
+}
+
+async function continueFromSave(saveData: SaveData): Promise<boolean> {
+  return await game.restoreFromSave(saveData);
+}
 
 async function init(): Promise<void> {
   hintTitleEl.textContent = '加载中...';
@@ -110,7 +183,20 @@ async function init(): Promise<void> {
     console.warn('后端健康检查失败');
   }
 
-  const loaded = await game.loadLevel(1);
+  const saveData = Game.loadSave();
+  let loaded = false;
+
+  if (saveData && saveData.completedEdges.length > 0) {
+    const shouldContinue = await showSaveDialog(saveData);
+    if (shouldContinue) {
+      loaded = await continueFromSave(saveData);
+    } else {
+      loaded = await startNewGame();
+    }
+  } else {
+    loaded = await startNewGame();
+  }
+
   if (!loaded) {
     hintTitleEl.textContent = '⚠️ 加载失败';
     hintTextEl.textContent = '无法加载关卡数据，请确保后端服务器已启动 (npm run dev:backend)';
